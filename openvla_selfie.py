@@ -321,8 +321,21 @@ def interpret_openvla(
         inputs = processor(prompt, image)
     else:
         inputs = tokenizer(prompt, return_tensors="pt")
-    inputs = {k: v.to(openvla_model.device) for k, v in inputs.items()
-              if isinstance(v, torch.Tensor)}
+    # Move to device. Float tensors (e.g. pixel_values) must also match the
+    # model's dtype -- OpenVLA is typically loaded in bfloat16, but the HF
+    # image processor returns float32, which makes the vision encoder's conv
+    # layer raise "Input type (float) and bias type (BFloat16) should be the
+    # same". Integer tensors (input_ids, attention_mask) stay as-is.
+    model_dtype = next(openvla_model.parameters()).dtype
+    fixed_inputs = {}
+    for k, v in inputs.items():
+        if not isinstance(v, torch.Tensor):
+            continue
+        v = v.to(openvla_model.device)
+        if v.is_floating_point():
+            v = v.to(model_dtype)
+        fixed_inputs[k] = v
+    inputs = fixed_inputs
 
     all_hidden = record_hidden_states(openvla_model, **inputs)
 
